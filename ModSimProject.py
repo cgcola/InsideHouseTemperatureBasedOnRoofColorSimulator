@@ -1,12 +1,8 @@
-import matplotlib
-matplotlib.use('TkAgg')
 import requests
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
-
-plt.ion()
 
 # Constants
 FLOOR_AREA = 124.87  # m²
@@ -20,37 +16,30 @@ SPECIFIC_HEAT_INSULATION = 840  # J/kg·K (fiberglass)
 THERMAL_CONDUCTIVITY_METAL = 50  # W/m·K (steel)
 THERMAL_CONDUCTIVITY_INSULATION = 0.04  # W/m·K (fiberglass)
 MASS_ROOF = (ROOF_AREA * THICKNESS_ROOF * DENSITY_METAL) + (ROOF_AREA * THICKNESS_INSULATION * DENSITY_INSULATION)  # kg
-H_COMBINED = 30  # W/m²·K (increased for better heat loss)
+H_COMBINED = 10  # W/m²·K (combined convective coefficient)
 WALL_AREA = 131.61  # m²
-THICKNESS_WALL = 0.1  # m (concrete wall)
-DENSITY_WALL = 2400  # kg/m³ (concrete)
-SPECIFIC_HEAT_WALL = 900  # J/kg·K (concrete)
-MASS_WALL = WALL_AREA * THICKNESS_WALL * DENSITY_WALL  # kg
 WINDOW_AREA = 3.716  # m²
 H_WALL = 5  # W/m²·K
-H_WINDOW = 20  # W/m²·K (increased for better heat loss)
+H_WINDOW = 15  # W/m²·K
 AIR_DENSITY = 1.2  # kg/m³
 AIR_SPECIFIC_HEAT = 1005  # J/kg·K
 VOLUME = 2.5 * FLOOR_AREA  # m³
 MASS_AIR = AIR_DENSITY * VOLUME  # kg
-EFFECTIVE_MASS = MASS_AIR + MASS_ROOF * 0.5 + MASS_WALL * 0.3  # Include 50% roof, 30% wall mass
-EFFECTIVE_SPECIFIC_HEAT = (MASS_AIR * AIR_SPECIFIC_HEAT + MASS_ROOF * SPECIFIC_HEAT_METAL * 0.5 + MASS_WALL * SPECIFIC_HEAT_WALL * 0.3) / EFFECTIVE_MASS
 STEFAN_BOLTZMANN = 5.67e-8  # W/m²·K⁴
-EMISSIVITY = 0.7
-VENTILATION_RATE = 0.1  # Reduced for less aggressive cooling
+EMISSIVITY = 0.9
 
 # Absorptivity values for different roof colors
 ROOF_ABSORPTIVITY = {
-    'white': 0.20,    # Adjusted to a more reflective value for a white roof
-    'gray': 0.63,     # Unchanged, accurate for medium gray
-    'black': 0.94,    # Unchanged, accurate for black
-    'red': 0.60,      # Unchanged, accurate for medium red
-    'orange': 0.66,   # Unchanged, accurate for medium orange
-    'green': 0.65,    # Adjusted to represent a lighter green
-    'blue': 0.80,     # Adjusted to represent a darker blue
-    'beige': 0.20,    # Unchanged, accurate for beige
-    'brown': 0.80,    # Adjusted to represent a darker brown
-    'unpainted': 0.65 # Adjusted to represent a weathered metal (e.g., galvanized steel)
+    'white': 0.30,
+    'gray': 0.63,
+    'black': 0.94,
+    'red': 0.60,
+    'orange': 0.66,
+    'green': 0.75,
+    'blue': 0.70,
+    'beige': 0.20,
+    'brown': 0.66,
+    'unpainted': 0.75
 }
 
 # Coordinates for Metro Manila cities
@@ -93,9 +82,7 @@ def calculate_U_roof():
     """Calculate overall heat transfer coefficient (U-value) for composite roof."""
     R_metal = THICKNESS_ROOF / THERMAL_CONDUCTIVITY_METAL
     R_insulation = THICKNESS_INSULATION / THERMAL_CONDUCTIVITY_INSULATION
-    R_conv_inside = 1 / H_COMBINED
-    R_conv_outside = 1 / H_COMBINED
-    R_total = R_metal + R_insulation + R_conv_inside + R_conv_outside
+    R_total = R_metal + R_insulation
     U_roof = 1 / R_total
     return U_roof
 
@@ -126,26 +113,25 @@ def simulate_indoor_temp(city, color, hours=24):
             continue
 
         # Heat transfer calculations
-        Q_solar = I_solar * ROOF_AREA * alpha * 0.1  # Reduced to 10%
+        Q_solar = I_solar * ROOF_AREA * alpha
         Q_roof = U_roof * ROOF_AREA * (T_out - T_in)
-        Q_window = H_WINDOW * WINDOW_AREA * (T_in - T_out)
+        Q_window = H_WINDOW * WINDOW_AREA * 10 * (T_in - T_out)  # Factor of 10 intentional
 
         # Radiative heat loss
-        T_roof_K = T_in + 273.15
-        T_sky_K = T_out - 1 + 273.15 if (t >= 23 or t <= 3) else T_out + 273.15
-        Q_radiation = EMISSIVITY * STEFAN_BOLTZMANN * ROOF_AREA * (T_roof_K**4 - T_sky_K**4)
-        Q_radiation = np.clip(Q_radiation, -3000, 3000)  # Reduced cap
-
-        # Ventilation (at night, hours 23-3)
-        Q_ventilation = 0
-        if t >= 23 or t <= 3 and T_in > T_out:
-            Q_ventilation = VENTILATION_RATE * VOLUME * AIR_DENSITY * AIR_SPECIFIC_HEAT * (T_in - T_out) / 3600
-            Q_ventilation = np.clip(Q_ventilation, -500, 500)  # Reduced cap
+        Q_radiation = 0
+        if I_solar < 10:
+            T_roof_K = T_in + 273.15
+            T_sky_K = T_out - 10 + 273.15
+            if not (200 <= T_roof_K <= 400) or not (200 <= T_sky_K <= 400):
+                print(f"Warning at hour {t}: T_roof_K={T_roof_K}, T_sky_K={T_sky_K}. Skipping radiation.")
+                Q_radiation = 0
+            else:
+                Q_radiation = EMISSIVITY * STEFAN_BOLTZMANN * ROOF_AREA * (T_roof_K**4 - T_sky_K**4)
 
         # Net heat and temp change
-        Q_net = Q_solar + Q_roof - Q_window - Q_radiation - Q_ventilation
-        delta_T = (Q_net * 3600) / (EFFECTIVE_MASS * EFFECTIVE_SPECIFIC_HEAT)
-        delta_T = np.clip(delta_T, -3, 3)  # Softer clipping
+        Q_net = Q_solar + Q_roof - Q_window - Q_radiation
+        delta_T = (Q_net * 3600) / (MASS_AIR * AIR_SPECIFIC_HEAT)
+        delta_T = np.clip(delta_T, -10, 10)
         T_new = T_in + delta_T
         T_new = np.clip(T_new, -50, 100)
         temp_inside.append(T_new)
@@ -169,8 +155,10 @@ def plot_simulation(city, color):
         print("Cannot plot due to missing weather data.")
         return
 
+    # Print table
     print_temperature_table(city, color, T_out, T_in)
 
+    # Plot
     plt.figure(figsize=(10, 6))
     hours = np.arange(24)
     plt.plot(hours, T_out, label="Outdoor Temp (°C)", linestyle='--')
@@ -181,9 +169,7 @@ def plot_simulation(city, color):
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig("simulation_plot.png")
     plt.show()
-    plt.pause(1)
 
 def visualize_thermal(city, color):
     """Visualize indoor temperature as a heatmap."""
@@ -200,9 +186,7 @@ def visualize_thermal(city, color):
     plt.yticks([])
     plt.xticks(np.arange(0, 25, 1))
     plt.tight_layout()
-    plt.savefig("thermal_heatmap.png")
     plt.show()
-    plt.pause(1)
 
 def get_user_input():
     """Get validated user input for city and color."""
@@ -222,6 +206,7 @@ def get_user_input():
 
     return city, color
 
+# Example usage
 if __name__ == "__main__":
     city, color = get_user_input()
     plot_simulation(city, color)
