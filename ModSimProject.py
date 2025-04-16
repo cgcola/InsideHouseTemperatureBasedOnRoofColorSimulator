@@ -5,8 +5,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
-
+from datetime import datetime
 plt.ion()
+import imageio
+from PIL import Image
+import os
 
 # Constants
 FLOOR_AREA = 124.87  # m²
@@ -153,8 +156,9 @@ def simulate_indoor_temp(city, color, hours=24):
     return temps_outside[:hours], temp_inside
 
 def print_temperature_table(city, color, T_out, T_in):
-    """Print a table of outdoor and indoor temperatures."""
-    print(f"\nTemperature Data for {city} with {color.capitalize()} Roof")
+    """Print a table of outdoor and indoor temperatures with the current date."""
+    current_date = datetime.now().strftime("%Y-%m-%d")  # Format: YYYY-MM-DD
+    print(f"\nTemperature Data for {city} with {color.capitalize()} Roof on {current_date}")
     print("-" * 50)
     print(f"{'Hour':<6} {'Outdoor Temp (°C)':<20} {'Indoor Temp (°C)':<20}")
     print("-" * 50)
@@ -171,38 +175,86 @@ def plot_simulation(city, color):
 
     print_temperature_table(city, color, T_out, T_in)
 
+    current_date = datetime.now().strftime("%Y-%m-%d")  # Format: YYYY-MM-DD
     plt.figure(figsize=(10, 6))
     hours = np.arange(24)
     plt.plot(hours, T_out, label="Outdoor Temp (°C)", linestyle='--')
     plt.plot(hours, T_in, label=f"Indoor Temp - {color.capitalize()} Roof (°C)", linewidth=2)
-    plt.title(f"Indoor Temperature Simulation for {city}")
+    plt.title(f"Indoor Temperature Simulation for {city} ({color.capitalize()} Roof) on {current_date}")
     plt.xlabel("Hour")
     plt.ylabel("Temperature (°C)")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
     plt.savefig("simulation_plot.png")
-    plt.show()
-    plt.pause(1)
+    plt.show(block=True)
 
 def visualize_thermal(city, color):
-    """Visualize indoor temperature as a heatmap."""
+    """Visualize indoor temperature as a heatmap with the current date."""
     _, T_in = simulate_indoor_temp(city, color)
     if T_in is None:
         print("Cannot visualize due to missing weather data.")
         return
 
+    current_date = datetime.now().strftime("%Y-%m-%d")  # Format: YYYY-MM-DD
     plt.figure(figsize=(12, 2))
     plt.imshow([T_in], aspect='auto', cmap='inferno', extent=[0, 24, 0, 1])
     plt.colorbar(label='Indoor Temp (°C)')
-    plt.title(f"Thermal Visualization of Indoor Temp for {city} ({color.capitalize()} Roof)")
+    plt.title(f"Thermal Visualization of Indoor Temp for {city} ({color.capitalize()} Roof) on {current_date}")
     plt.xlabel("Hour")
     plt.yticks([])
     plt.xticks(np.arange(0, 25, 1))
     plt.tight_layout()
     plt.savefig("thermal_heatmap.png")
-    plt.show()
-    plt.pause(1)
+    plt.show(block=True)
+
+def generate_thermal_gif(city, color, house_image_path='house_structure.png', output_gif='thermal_day.gif'):
+    """Create a GIF of temperature changes throughout the day on a transparent house image."""
+    T_out, T_in = simulate_indoor_temp(city, color)
+    if T_in is None:
+        print("Cannot generate GIF due to missing data.")
+        return
+
+    try:
+        base_img = Image.open(house_image_path).convert("RGBA")
+    except FileNotFoundError:
+        print(f"House image not found at: {house_image_path}")
+        return
+
+    width, height = base_img.size
+    frames = []
+
+    # Normalize temp for colormap
+    min_temp = min(T_in)
+    max_temp = max(T_in)
+    norm = mcolors.Normalize(vmin=min_temp, vmax=max_temp)
+    cmap = cm.get_cmap('inferno')
+
+    for hour, temp in enumerate(T_in):
+        rgba_overlay = cmap(norm(temp), bytes=True)  # (R,G,B,A)
+        heat_color = Image.new("RGBA", (width, height), rgba_overlay)
+        frame = Image.alpha_composite(base_img, heat_color)
+
+        # Draw frame with title
+        fig, ax = plt.subplots(figsize=(4, 4), dpi=100)
+        ax.imshow(frame)
+        ax.axis('off')
+        ax.set_title(f"{city} | {color.capitalize()} Roof\nHour {hour:02d}:00 — {temp:.1f}°C", fontsize=10)
+        fig.tight_layout()
+
+        temp_path = f"_frame_{hour:02d}.png"
+        plt.savefig(temp_path, bbox_inches='tight', transparent=True)
+        plt.close(fig)
+
+        frames.append(imageio.imread(temp_path))
+
+    imageio.mimsave(output_gif, frames)
+    print(f"Thermal GIF saved as {output_gif}")
+
+    # Clean up temporary frame files
+    for temp_path in [f"_frame_{h:02d}.png" for h in range(24)]:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
 def get_user_input():
     """Get validated user input for city and color."""
@@ -226,3 +278,4 @@ if __name__ == "__main__":
     city, color = get_user_input()
     plot_simulation(city, color)
     visualize_thermal(city, color)
+    generate_thermal_gif(city, color)
