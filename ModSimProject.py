@@ -5,7 +5,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
-from datetime import datetime
+from datetime import datetime, timedelta
+import os
+import tempfile
+from PIL import Image
+import mplcursors
 plt.ion()
 
 # Constants
@@ -76,17 +80,43 @@ CITY_COORDINATES = {
 # Supported cities
 CITIES = list(CITY_COORDINATES.keys())
 
-def get_weather_data(city):
-    """Fetch hourly temperature and solar radiation from Open-Meteo API."""
+def get_weather_data(city, sim_date, hours=24):
+    """Fetch hourly temperature and solar radiation for the specified date."""
     try:
         lat, lon = CITY_COORDINATES[city]
-        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=temperature_2m,shortwave_radiation&timezone=Asia/Manila"
-        response = requests.get(url)
-        response.raise_for_status()
-        data = response.json()
-        return data['hourly']['temperature_2m'], data['hourly']['shortwave_radiation']
+        current_date = datetime.now().date()
+        sim_date = datetime.strptime(sim_date, '%Y-%m-%d').date()
+
+        if sim_date >= current_date:
+            # Future or current date: Use forecast API
+            url = (
+                f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
+                f"&hourly=temperature_2m,shortwave_radiation&timezone=Asia/Manila"
+            )
+            response = requests.get(url)
+            response.raise_for_status()
+            data = response.json()
+            temp = data['hourly']['temperature_2m'][:hours]
+            solar = data['hourly']['shortwave_radiation'][:hours]
+        else:
+            # Past date: Use archive API
+            url = (
+                f"https://archive-api.open-meteo.com/v1/archive?latitude={lat}&longitude={lon}"
+                f"&start_date={sim_date}&end_date={sim_date}"
+                f"&hourly=temperature_2m,shortwave_radiation&timezone=Asia/Manila"
+            )
+            response = requests.get(url)
+            response.raise_for_status()
+            data = response.json()
+            temp = data['hourly']['temperature_2m'][:hours]
+            solar = data['hourly']['shortwave_radiation'][:hours]
+
+        return temp, solar
+
     except requests.RequestException as e:
-        print(f"Error fetching weather data for {city}: {e}")
+        print(f"Error fetching weather data for {city} on {sim_date}: {e}")
+        if isinstance(e, requests.HTTPError) and e.response.status_code == 400:
+            print("Likely cause: Invalid API request (e.g., future date for archive API or invalid parameters).")
         return None, None
 
 def calculate_U_roof():
@@ -99,14 +129,14 @@ def calculate_U_roof():
     U_roof = 1 / R_total
     return U_roof
 
-def simulate_indoor_temp(city, color, hours=24):
-    """Simulate indoor temperature for a given city and roof color."""
+def simulate_indoor_temp(city, color, sim_date, hours=24):
+    """Simulate indoor temperature for a given city, roof color, and date."""
     if city not in CITIES:
         raise ValueError(f"City {city} not supported. Choose from {CITIES}")
     if color not in ROOF_ABSORPTIVITY:
         raise ValueError(f"Color {color} not supported. Choose from {list(ROOF_ABSORPTIVITY.keys())}")
 
-    temps_outside, solar_radiation = get_weather_data(city)
+    temps_outside, solar_radiation = get_weather_data(city, sim_date)
     if temps_outside is None or solar_radiation is None:
         return None, None
 
@@ -126,7 +156,7 @@ def simulate_indoor_temp(city, color, hours=24):
             continue
 
         # Heat transfer calculations
-        Q_solar = I_solar * ROOF_AREA * alpha * 0.1 # Reduced to 10%
+        Q_solar = I_solar * ROOF_AREA * alpha * 0.1  # Reduced to 10%
         Q_roof = U_roof * ROOF_AREA * (T_out - T_in)
         Q_window = H_WINDOW * WINDOW_AREA * (T_in - T_out)
 
@@ -152,10 +182,9 @@ def simulate_indoor_temp(city, color, hours=24):
 
     return temps_outside[:hours], temp_inside
 
-def print_temperature_table(city, color, T_out, T_in):
-    """Print a table of outdoor and indoor temperatures with the current date."""
-    current_date = datetime.now().strftime("%Y-%m-%d")  # Format: YYYY-MM-DD
-    print(f"\nTemperature Data for {city} with {color.capitalize()} Roof on {current_date}")
+def print_temperature_table(city, color, T_out, T_in, sim_date):
+    """Print a table of outdoor and indoor temperatures for the specified date."""
+    print(f"\nTemperature Data for {city} with {color.capitalize()} Roof on {sim_date}")
     print("-" * 50)
     print(f"{'Hour':<6} {'Outdoor Temp (°C)':<20} {'Indoor Temp (°C)':<20}")
     print("-" * 50)
@@ -163,61 +192,185 @@ def print_temperature_table(city, color, T_out, T_in):
         print(f"{h:<6} {out:<20.2f} {ins:<20.2f}")
     print("-" * 50)
 
+def create_gif(frame_files, output_gif, duration=500):
+    """Combine PNG frames into a GIF."""
+    images = [Image.open(f) for f in frame_files]
+    images[0].save(
+        output_gif,
+        save_all=True,
+        append_images=images[1:],
+        duration=duration,
+        loop=0
+    )
 
-def plot_simulation(city, color):
-    """Plot indoor vs outdoor temperatures with hour labels and dotted points."""
-    T_out, T_in = simulate_indoor_temp(city, color)
+def plot_simulation(city, color, sim_date):
+    """Plot indoor vs outdoor temperatures with interactivity and create an animated GIF."""
+    T_out, T_in = simulate_indoor_temp(city, color, sim_date)
     if T_out is None or T_in is None:
         print("Cannot plot due to missing weather data.")
         return
 
-    print_temperature_table(city, color, T_out, T_in)
+    print_temperature_table(city, color, T_out, T_in, sim_date)
 
-    current_date = datetime.now().strftime("%Y-%m-%d")
-    plt.figure(figsize=(10, 6))
+    # Create temporary directory for frames
+    with tempfile.TemporaryDirectory() as temp_dir:
+        frame_files = []
+
+        # Generate frames for each hour
+        for h in range(24):
+            plt.figure(figsize=(10, 6))
+            hours = np.arange(h + 1)
+
+            # Plot up to current hour
+            plt.plot(
+                hours, T_out[:h + 1], label="Outdoor Temp (°C)",
+                linestyle='--', color='blue', marker='o', markersize=5
+            )
+            plt.plot(
+                hours, T_in[:h + 1], label=f"Indoor Temp - {color.capitalize()} Roof (°C)",
+                linestyle='-', color='orange', linewidth=2, marker='o', markersize=5
+            )
+
+            plt.title(f"Indoor Temperature Simulation for {city} ({color.capitalize()} Roof) on {sim_date}")
+            plt.xlabel("Hour")
+            plt.ylabel("Temperature (°C)")
+            plt.legend()
+            plt.grid(True)
+            plt.xticks(np.arange(0, 24, 1), [str(i) for i in range(24)], rotation=45)
+            plt.xlim(0, 23)
+            plt.ylim(min(min(T_out), min(T_in)) - 1, max(max(T_out), max(T_in)) + 1)
+            plt.tight_layout()
+
+            # Save frame
+            frame_path = os.path.join(temp_dir, f"frame_{h:03d}.png")
+            plt.savefig(frame_path)
+            frame_files.append(frame_path)
+            plt.close()
+
+        # Create GIF
+        create_gif(frame_files, "simulation_plot.gif", duration=500)
+
+    # Generate static plot with interactivity
+    fig, ax = plt.subplots(figsize=(10, 6))
     hours = np.arange(24)
-
-    # Plot with dotted points at each hour
-    plt.plot(hours, T_out, label="Outdoor Temp (°C)", linestyle='--', color='blue', marker='o', markersize=5)
-    plt.plot(hours, T_in, label=f"Indoor Temp - {color.capitalize()} Roof (°C)", linestyle='-', color='orange',
-             linewidth=2, marker='o', markersize=5)
-
-    plt.title(f"Indoor Temperature Simulation for {city} ({color.capitalize()} Roof) on {current_date}")
-    plt.xlabel("Hour")
-    plt.ylabel("Temperature (°C)")
-    plt.legend()
-    plt.grid(True)
-
-    # Set x-axis labels to "0" to "24"
-    plt.xticks(hours, [str(h) for h in hours], rotation=45)
-
-    # Remove excess space before Hour 0 and after Hour 23
-    plt.xlim(0, 23)
-
+    line_out, = ax.plot(
+        hours, T_out, label="Outdoor Temp (°C)",
+        linestyle='--', color='blue', marker='o', markersize=5
+    )
+    line_in, = ax.plot(
+        hours, T_in, label=f"Indoor Temp - {color.capitalize()} Roof (°C)",
+        linestyle='-', color='orange', linewidth=2, marker='o', markersize=5
+    )
+    ax.set_title(f"Indoor Temperature Simulation for {city} ({color.capitalize()} Roof) on {sim_date}")
+    ax.set_xlabel("Hour")
+    ax.set_ylabel("Temperature (°C)")
+    ax.legend()
+    ax.grid(True)
+    ax.set_xticks(hours)
+    ax.set_xticklabels([str(h) for h in hours], rotation=45)
+    ax.set_xlim(0, 23)
     plt.tight_layout()
-    plt.savefig("simulation_plot.png")
 
-def visualize_thermal(city, color):
-    """Visualize indoor temperature as a heatmap with the current date."""
-    _, T_in = simulate_indoor_temp(city, color)
-    if T_in is None:
+    # Add interactivity
+    cursor = mplcursors.cursor([line_out, line_in], hover=True)
+    @cursor.connect("add")
+    def on_add(sel):
+        index = int(round(sel.target[0]))
+        if 0 <= index < 24:
+            sel.annotation.set_text(
+                f"Hour: {index}\nOutdoor: {T_out[index]:.2f} °C\nIndoor: {T_in[index]:.2f} °C"
+            )
+
+    plt.savefig("simulation_plot.png")
+    plt.show(block=True)
+
+def visualize_thermal(city, color, sim_date):
+    """Visualize indoor temperature as a heatmap with interactivity and create an animated GIF."""
+    T_out, T_in = simulate_indoor_temp(city, color, sim_date)
+    if T_out is None or T_in is None:
         print("Cannot visualize due to missing weather data.")
         return
 
-    current_date = datetime.now().strftime("%Y-%m-%d")  # Format: YYYY-MM-DD
-    plt.figure(figsize=(12, 2))
-    plt.imshow([T_in], aspect='auto', cmap='inferno', extent=[0, 24, 0, 1])
-    plt.colorbar(label='Indoor Temp (°C)')
-    plt.title(f"Thermal Visualization of Indoor Temp for {city} ({color.capitalize()} Roof) on {current_date}")
-    plt.xlabel("Hour")
-    plt.yticks([])
-    plt.xticks(np.arange(0, 25, 1))
+    # Create temporary directory for frames
+    with tempfile.TemporaryDirectory() as temp_dir:
+        frame_files = []
+
+        # Generate frames for each hour
+        for h in range(24):
+            plt.figure(figsize=(12, 2))
+            # Show temperatures from Hour 0 to current hour
+            data = [T_in[:h+1]]  # All hours up to h
+            plt.imshow(
+                data, aspect='auto', cmap='inferno',
+                extent=[0, h+1, 0, 1], vmin=min(T_in), vmax=max(T_in)
+            )
+            plt.colorbar(label='Indoor Temp (°C)')
+            plt.title(f"Thermal Visualization of Indoor Temp for {city} ({color.capitalize()} Roof) on {sim_date}")
+            plt.xlabel("Hour")
+            plt.yticks([])
+            plt.xticks(np.arange(0, 25, 1))
+            plt.xlim(0, 24)  # Keep full x-axis for context
+            plt.tight_layout()
+
+            # Save frame
+            frame_path = os.path.join(temp_dir, f"heatmap_frame_{h:03d}.png")
+            plt.savefig(frame_path)
+            frame_files.append(frame_path)
+            plt.close()
+
+        # Add final frame with full heatmap
+        plt.figure(figsize=(12, 2))
+        plt.imshow(
+            [T_in], aspect='auto', cmap='inferno',
+            extent=[0, 24, 0, 1], vmin=min(T_in), vmax=max(T_in)
+        )
+        plt.colorbar(label='Indoor Temp (°C)')
+        plt.title(f"Thermal Visualization of Indoor Temp for {city} ({color.capitalize()} Roof) on {sim_date}")
+        plt.xlabel("Hour")
+        plt.yticks([])
+        plt.xticks(np.arange(0, 25, 1))
+        plt.xlim(0, 24)
+        plt.tight_layout()
+
+        # Save final frame
+        final_frame_path = os.path.join(temp_dir, "heatmap_frame_final.png")
+        plt.savefig(final_frame_path)
+        frame_files.append(final_frame_path)
+        plt.close()
+
+        # Create GIF
+        create_gif(frame_files, "thermal_heatmap.gif", duration=500)
+
+    # Generate static heatmap with interactivity
+    fig, ax = plt.subplots(figsize=(12, 2))
+    im = ax.imshow(
+        [T_in], aspect='auto', cmap='inferno', extent=[0, 24, 0, 1],
+        vmin=min(T_in), vmax=max(T_in)
+    )
+    plt.colorbar(im, label='Indoor Temp (°C)')
+    ax.set_title(f"Thermal Visualization of Indoor Temp for {city} ({color.capitalize()} Roof) on {sim_date}")
+    ax.set_xlabel("Hour")
+    ax.set_yticks([])
+    ax.set_xticks(np.arange(0, 25, 1))
     plt.tight_layout()
+
+    # Add interactivity
+    cursor = mplcursors.cursor(im, hover=True)
+    @cursor.connect("add")
+    def on_add(sel):
+        x = sel.target[0]
+        index = int(round(x))
+        if 0 <= index < 24:
+            sel.annotation.set_text(
+                f"Hour: {index}\nOutdoor: {T_out[index]:.2f} °C\nIndoor: {T_in[index]:.2f} °C"
+            )
+
     plt.savefig("thermal_heatmap.png")
     plt.show(block=True)
 
 def get_user_input():
-    """Get validated user input for city and color."""
+    """Get validated user input for city, color, and simulation date."""
+    # City input
     print("Available cities:", ", ".join(CITIES))
     while True:
         city = input("Enter city: ").strip().title()
@@ -225,6 +378,7 @@ def get_user_input():
             break
         print(f"Invalid city. Choose from: {', '.join(CITIES)}")
 
+    # Color input
     print("Available roof colors:", ", ".join(ROOF_ABSORPTIVITY.keys()))
     while True:
         color = input("Enter roof color: ").strip().lower()
@@ -232,9 +386,23 @@ def get_user_input():
             break
         print(f"Invalid color. Choose from: {', '.join(ROOF_ABSORPTIVITY.keys())}")
 
-    return city, color
+    # Date input
+    min_date = datetime(2020, 1, 1).date()
+    max_date = (datetime.now() + timedelta(days=7)).date()
+    print(f"Enter simulation date (YYYY-MM-DD) between {min_date} and {max_date}:")
+    while True:
+        date_input = input("Enter date: ").strip()
+        try:
+            sim_date = datetime.strptime(date_input, '%Y-%m-%d').date()
+            if min_date <= sim_date <= max_date:
+                break
+            print(f"Date must be between {min_date} and {max_date}.")
+        except ValueError:
+            print("Invalid date format. Use YYYY-MM-DD (e.g., 2025-04-17).")
+
+    return city, color, sim_date.strftime('%Y-%m-%d')
 
 if __name__ == "__main__":
-    city, color = get_user_input()
-    plot_simulation(city, color)
-    visualize_thermal(city, color)
+    city, color, sim_date = get_user_input()
+    plot_simulation(city, color, sim_date)
+    visualize_thermal(city, color, sim_date)
