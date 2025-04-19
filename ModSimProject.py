@@ -183,7 +183,8 @@ def simulate_indoor_temp(city, color, sim_date, hours=24):
     return temps_outside[:hours], temp_inside
 
 def print_temperature_table(city, color, T_out, T_in, sim_date):
-    """Print a table of outdoor and indoor temperatures for the specified date."""
+    """Print a table of outdoor and indoor temperatures and save as PNG."""
+    # Print to console
     print(f"\nTemperature Data for {city} with {color.capitalize()} Roof on {sim_date}")
     print("-" * 50)
     print(f"{'Hour':<6} {'Outdoor Temp (°C)':<20} {'Indoor Temp (°C)':<20}")
@@ -191,6 +192,31 @@ def print_temperature_table(city, color, T_out, T_in, sim_date):
     for h, (out, ins) in enumerate(zip(T_out, T_in)):
         print(f"{h:<6} {out:<20.2f} {ins:<20.2f}")
     print("-" * 50)
+
+    # Create table data
+    table_data = [[str(h), f"{out:.2f}", f"{ins:.2f}"] for h, (out, ins) in enumerate(zip(T_out, T_in))]
+    columns = ['Hour', 'Outdoor Temp (°C)', 'Indoor Temp (°C)']
+
+    # Create figure and table
+    fig, ax = plt.subplots(figsize=(10, 10))  # Reduced height to minimize space after table
+    ax.axis('off')  # Hide axes
+    table = ax.table(
+        cellText=table_data,
+        colLabels=columns,
+        loc='center',
+        cellLoc='center',
+        colColours=['#f0f0f0'] * 3,
+        colWidths=[0.15, 0.35, 0.35]  # Balanced spacing
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(11)  # Clear text
+    table.scale(1.2, 1.8)  # Adjusted for taller rows and wider columns
+    plt.title(f"Temperature Data for {city} with {color.capitalize()} Roof on {sim_date}", pad=10, fontsize=14)  # Reduced padding
+    plt.tight_layout(pad=0.5)  # Reduced padding to minimize space
+
+    # Save table as PNG
+    plt.savefig("temperature_table.png", bbox_inches='tight', dpi=150, pad_inches=0.05)  # Minimized padding
+    plt.close()
 
 def create_gif(frame_files, output_gif, duration=500):
     """Combine PNG frames into a GIF."""
