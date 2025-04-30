@@ -10,7 +10,7 @@ import os
 import tempfile
 from PIL import Image
 import mplcursors
-plt.ion()
+plt.ioff()
 
 # Constants
 FLOOR_AREA = 124.87  # m²
