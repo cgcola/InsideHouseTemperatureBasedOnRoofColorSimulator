@@ -10,7 +10,7 @@ import os
 import tempfile
 from PIL import Image
 import mplcursors
-plt.ion()
+plt.ioff()
 
 # Constants
 FLOOR_AREA = 124.87  # m²
@@ -24,7 +24,7 @@ SPECIFIC_HEAT_INSULATION = 840  # J/kg·K (fiberglass)
 THERMAL_CONDUCTIVITY_METAL = 50  # W/m·K (steel)
 THERMAL_CONDUCTIVITY_INSULATION = 0.5  # W/m·K (fiberglass)
 MASS_ROOF = (ROOF_AREA * THICKNESS_ROOF * DENSITY_METAL) + (ROOF_AREA * THICKNESS_INSULATION * DENSITY_INSULATION)  # kg
-H_COMBINED = 40  # W/m²·K (increased for better heat loss)
+H_COMBINED = 40  # W/m²·K
 WALL_AREA = 131.61  # m²
 THICKNESS_WALL = 0.1  # m (concrete wall)
 DENSITY_WALL = 2400  # kg/m³ (concrete)
@@ -32,29 +32,30 @@ SPECIFIC_HEAT_WALL = 900  # J/kg·K (concrete)
 MASS_WALL = WALL_AREA * THICKNESS_WALL * DENSITY_WALL  # kg
 WINDOW_AREA = 3.716  # m²
 H_WALL = 5  # W/m²·K
-H_WINDOW = 20  # W/m²·K (increased for better heat loss)
+H_WINDOW = 20  # W/m²·K
 AIR_DENSITY = 1.2  # kg/m³
 AIR_SPECIFIC_HEAT = 1005  # J/kg·K
 VOLUME = 2.5 * FLOOR_AREA  # m³
 MASS_AIR = AIR_DENSITY * VOLUME  # kg
 EFFECTIVE_MASS = MASS_AIR + MASS_ROOF * 0.5 + MASS_WALL * 0.3  # Include 50% roof, 30% wall mass
-EFFECTIVE_SPECIFIC_HEAT = (MASS_AIR * AIR_SPECIFIC_HEAT + MASS_ROOF * SPECIFIC_HEAT_METAL * 0.5 + MASS_WALL * SPECIFIC_HEAT_WALL * 0.3) / EFFECTIVE_MASS
+EFFECTIVE_SPECIFIC_HEAT = (
+    MASS_AIR * AIR_SPECIFIC_HEAT + MASS_ROOF * SPECIFIC_HEAT_METAL * 0.5 + MASS_WALL * SPECIFIC_HEAT_WALL * 0.3) / EFFECTIVE_MASS
 STEFAN_BOLTZMANN = 5.67e-8  # W/m²·K⁴
 EMISSIVITY = 0.7
-VENTILATION_RATE = 0.1  # Reduced for less aggressive cooling
+VENTILATION_RATE = 0.1
 
 # Absorptivity values for different roof colors
 ROOF_ABSORPTIVITY = {
-    'white': 0.20,    # Adjusted to a more reflective value for a white roof
-    'gray': 0.53,     # Unchanged, accurate for medium gray
-    'black': 0.94,    # Unchanged, accurate for black
-    'red': 0.55,      # Unchanged, accurate for medium red
-    'orange': 0.60,   # Unchanged, accurate for medium orange
-    'green': 0.60,    # Adjusted to represent a lighter green
-    'blue': 0.72,     # Adjusted to represent a darker blue
-    'beige': 0.30,    # Unchanged, accurate for beige
-    'brown': 0.75,    # Adjusted to represent a darker brown
-    'unpainted': 0.45 # Adjusted to represent a weathered metal (e.g., galvanized steel)
+    'white': 0.20,
+    'gray': 0.53,
+    'black': 0.94,
+    'red': 0.55,
+    'orange': 0.60,
+    'green': 0.65,
+    'blue': 0.72,
+    'beige': 0.30,
+    'brown': 0.75,
+    'unpainted': 0.45
 }
 
 # Coordinates for Metro Manila cities
@@ -77,7 +78,6 @@ CITY_COORDINATES = {
     "Valenzuela": (14.7011, 120.9830)
 }
 
-# Supported cities
 CITIES = list(CITY_COORDINATES.keys())
 
 def get_weather_data(city, sim_date, hours=24):
@@ -156,7 +156,7 @@ def simulate_indoor_temp(city, color, sim_date, hours=24):
             continue
 
         # Heat transfer calculations
-        Q_solar = I_solar * ROOF_AREA * alpha * 0.1  # Reduced to 10%
+        Q_solar = I_solar * ROOF_AREA * alpha * 0.1
         Q_roof = U_roof * ROOF_AREA * (T_out - T_in)
         Q_window = H_WINDOW * WINDOW_AREA * (T_in - T_out)
 
@@ -164,18 +164,18 @@ def simulate_indoor_temp(city, color, sim_date, hours=24):
         T_roof_K = T_in + 273.15
         T_sky_K = T_out - 1 + 273.15 if (t >= 23 or t <= 3) else T_out + 273.15
         Q_radiation = EMISSIVITY * STEFAN_BOLTZMANN * ROOF_AREA * (T_roof_K**4 - T_sky_K**4)
-        Q_radiation = np.clip(Q_radiation, -3000, 3000)  # Reduced cap
+        Q_radiation = np.clip(Q_radiation, -3000, 3000)
 
         # Ventilation (at night, hours 23-3)
         Q_ventilation = 0
         if t >= 23 or t <= 3 and T_in > T_out:
             Q_ventilation = VENTILATION_RATE * VOLUME * AIR_DENSITY * AIR_SPECIFIC_HEAT * (T_in - T_out) / 3600
-            Q_ventilation = np.clip(Q_ventilation, -500, 500)  # Reduced cap
+            Q_ventilation = np.clip(Q_ventilation, -500, 500)
 
         # Net heat and temp change
         Q_net = Q_solar + Q_roof - Q_window - Q_radiation - Q_ventilation
         delta_T = (Q_net * 3600) / (EFFECTIVE_MASS * EFFECTIVE_SPECIFIC_HEAT)
-        delta_T = np.clip(delta_T, -3, 3)  # Softer clipping
+        delta_T = np.clip(delta_T, -3, 3)
         T_new = T_in + delta_T
         T_new = np.clip(T_new, -50, 100)
         temp_inside.append(T_new)
@@ -183,7 +183,7 @@ def simulate_indoor_temp(city, color, sim_date, hours=24):
     return temps_outside[:hours], temp_inside
 
 def print_temperature_table(city, color, T_out, T_in, sim_date):
-    """Print a table of outdoor and indoor temperatures and save as PNG."""
+    """Print a table of outdoor and indoor temperatures for a single roof color and save as PNG."""
     # Print to console
     print(f"\nTemperature Data for {city} with {color.capitalize()} Roof on {sim_date}")
     print("-" * 50)
@@ -198,24 +198,89 @@ def print_temperature_table(city, color, T_out, T_in, sim_date):
     columns = ['Hour', 'Outdoor Temp (°C)', 'Indoor Temp (°C)']
 
     # Create figure and table
-    fig, ax = plt.subplots(figsize=(10, 10))  # Reduced height to minimize space after table
-    ax.axis('off')  # Hide axes
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.axis('off')
     table = ax.table(
         cellText=table_data,
         colLabels=columns,
         loc='center',
         cellLoc='center',
         colColours=['#f0f0f0'] * 3,
-        colWidths=[0.15, 0.35, 0.35]  # Balanced spacing
+        colWidths=[0.15, 0.35, 0.35]
     )
     table.auto_set_font_size(False)
     table.set_fontsize(11)  # Clear text
-    table.scale(1.2, 1.8)  # Adjusted for taller rows and wider columns
-    plt.title(f"Temperature Data for {city} with {color.capitalize()} Roof on {sim_date}", pad=10, fontsize=14)  # Reduced padding
-    plt.tight_layout(pad=0.5)  # Reduced padding to minimize space
+    table.scale(1.2, 1.8)
+    plt.title(f"Temperature Data for {city} with {color.capitalize()} Roof on {sim_date}", pad=10, fontsize=14)
+    plt.tight_layout(pad=0.5)
 
     # Save table as PNG
-    plt.savefig("temperature_table.png", bbox_inches='tight', dpi=150, pad_inches=0.05)  # Minimized padding
+    plt.savefig("temperature_table.png", bbox_inches='tight', dpi=150, pad_inches=0.05)
+    plt.close()
+
+def print_all_colors_temperature_table(city, sim_date):
+    """Print a table of outdoor temperature and indoor temperatures for all roof colors and save as PNG."""
+    T_out, _ = simulate_indoor_temp(city, 'white', sim_date)  # Get outdoor temp
+    if T_out is None:
+        print("Cannot create table due to missing weather data.")
+        return
+
+    # Collect indoor temperatures for all colors in the same order as plot_all_colors
+    all_temps = []
+    color_order = ['white', 'gray', 'black', 'red', 'orange', 'green', 'blue', 'beige', 'brown', 'unpainted']
+    for color in color_order:
+        _, T_in = simulate_indoor_temp(city, color, sim_date)
+        if T_in is None:
+            print(f"Skipping {color} due to missing data.")
+            continue
+        all_temps.append(T_in)
+
+    if not all_temps:
+        print("No valid temperature data available for table.")
+        return
+
+    print(f"\nTemperature Data for All Roof Colors in {city} on {sim_date}")
+    header = f"{'Hour':<6} {'Outdoor (°C)':<12}"
+    for color in color_order:
+        header += f"{color.capitalize():<12}"
+    print("-" * len(header))
+    print(header)
+    print("-" * len(header))
+    for h in range(24):
+        row = f"{h:<6} {T_out[h]:<12.2f}"
+        for T_in in all_temps:
+            row += f"{T_in[h]:<12.2f}"
+        print(row)
+    print("-" * len(header))
+
+    # Create table data
+    table_data = []
+    for h in range(24):
+        row = [str(h), f"{T_out[h]:.2f}"]
+        for T_in in all_temps:
+            row.append(f"{T_in[h]:.2f}")
+        table_data.append(row)
+    columns = ['Hour', 'Outdoor (°C)'] + [color.capitalize() for color in color_order]
+
+    # Create figure and table
+    fig, ax = plt.subplots(figsize=(14, 10))
+    ax.axis('off')  # Hide axes
+    table = ax.table(
+        cellText=table_data,
+        colLabels=columns,
+        loc='center',
+        cellLoc='center',
+        colColours=['#f0f0f0'] * len(columns),
+        colWidths=[0.08] + [0.085] * (len(columns) - 1)
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(9)
+    table.scale(1.2, 1.6)
+    plt.title(f"Temperature Data for All Roof Colors in {city} on {sim_date}", pad=10, fontsize=14)
+    plt.tight_layout(pad=0.5)
+
+    # Save table as PNG
+    plt.savefig("all_colors_temperature_table.png", bbox_inches='tight', dpi=150, pad_inches=0.05)
     plt.close()
 
 def create_gif(frame_files, output_gif, duration=500):
@@ -238,6 +303,19 @@ def plot_simulation(city, color, sim_date):
 
     print_temperature_table(city, color, T_out, T_in, sim_date)
 
+    color_map = {
+        'white': '#F5F5DC',
+        'gray': '#696969',
+        'black': '#333333',
+        'red': 'red',
+        'orange': 'orange',
+        'green': 'green',
+        'blue': 'blue',
+        'beige': 'tan',
+        'brown': 'brown',
+        'unpainted': '#4682B4'
+    }
+
     # Create temporary directory for frames
     with tempfile.TemporaryDirectory() as temp_dir:
         frame_files = []
@@ -250,11 +328,11 @@ def plot_simulation(city, color, sim_date):
             # Plot up to current hour
             plt.plot(
                 hours, T_out[:h + 1], label="Outdoor Temp (°C)",
-                linestyle='--', color='blue', marker='o', markersize=5
+                linestyle='--', color='#4B0082', marker='o', markersize=5
             )
             plt.plot(
                 hours, T_in[:h + 1], label=f"Indoor Temp - {color.capitalize()} Roof (°C)",
-                linestyle='-', color='orange', linewidth=2, marker='o', markersize=5
+                linestyle='-', color=color_map[color], linewidth=2, marker='o', markersize=5
             )
 
             plt.title(f"Indoor Temperature Simulation for {city} ({color.capitalize()} Roof) on {sim_date}")
@@ -281,11 +359,11 @@ def plot_simulation(city, color, sim_date):
     hours = np.arange(24)
     line_out, = ax.plot(
         hours, T_out, label="Outdoor Temp (°C)",
-        linestyle='--', color='blue', marker='o', markersize=5
+        linestyle='--', color='#4B0082', marker='o', markersize=5
     )
     line_in, = ax.plot(
         hours, T_in, label=f"Indoor Temp - {color.capitalize()} Roof (°C)",
-        linestyle='-', color='orange', linewidth=2, marker='o', markersize=5
+        linestyle='-', color=color_map[color], linewidth=2, marker='o', markersize=5
     )
     ax.set_title(f"Indoor Temperature Simulation for {city} ({color.capitalize()} Roof) on {sim_date}")
     ax.set_xlabel("Hour")
@@ -311,7 +389,7 @@ def plot_simulation(city, color, sim_date):
     plt.show(block=True)
 
 def visualize_thermal(city, color, sim_date):
-    """Visualize indoor temperature as a heatmap with interactivity and create an animated GIF."""
+    """Visualize indoor and outdoor temperatures as a heatmap with interactivity and create an animated GIF."""
     T_out, T_in = simulate_indoor_temp(city, color, sim_date)
     if T_out is None or T_in is None:
         print("Cannot visualize due to missing weather data.")
@@ -323,19 +401,21 @@ def visualize_thermal(city, color, sim_date):
 
         # Generate frames for each hour
         for h in range(24):
-            plt.figure(figsize=(12, 2))
+            plt.figure(figsize=(12, 3))
             # Show temperatures from Hour 0 to current hour
-            data = [T_in[:h+1]]  # All hours up to h
+            data = np.array([T_in[:h+1], T_out[:h+1]])
             plt.imshow(
                 data, aspect='auto', cmap='inferno',
-                extent=[0, h+1, 0, 1], vmin=min(T_in), vmax=max(T_in)
+                extent=[0, h+1, -0.5, 1.5], vmin=min(min(T_out), min(T_in)), vmax=max(max(T_out), max(T_in))
             )
-            plt.colorbar(label='Indoor Temp (°C)')
-            plt.title(f"Thermal Visualization of Indoor Temp for {city} ({color.capitalize()} Roof) on {sim_date}")
+            plt.hlines(0.5, 0, h+1, colors='white', linewidth=1)
+            plt.colorbar(label='Temperature (°C)')
+            plt.title(f"Thermal Visualization for {city} ({color.capitalize()} Roof) on {sim_date}")
             plt.xlabel("Hour")
-            plt.yticks([])
+            plt.yticks([0, 1], ['Outdoor', 'Indoor'])
             plt.xticks(np.arange(0, 25, 1))
-            plt.xlim(0, 24)  # Keep full x-axis for context
+            plt.xlim(0, 24)
+            plt.ylim(-0.5, 1.5)
             plt.tight_layout()
 
             # Save frame
@@ -345,17 +425,20 @@ def visualize_thermal(city, color, sim_date):
             plt.close()
 
         # Add final frame with full heatmap
-        plt.figure(figsize=(12, 2))
+        plt.figure(figsize=(12, 3))
+        data = np.array([T_in, T_out])
         plt.imshow(
-            [T_in], aspect='auto', cmap='inferno',
-            extent=[0, 24, 0, 1], vmin=min(T_in), vmax=max(T_in)
+            data, aspect='auto', cmap='inferno',
+            extent=[0, 24, -0.5, 1.5], vmin=min(min(T_out), min(T_in)), vmax=max(max(T_out), max(T_in))
         )
-        plt.colorbar(label='Indoor Temp (°C)')
-        plt.title(f"Thermal Visualization of Indoor Temp for {city} ({color.capitalize()} Roof) on {sim_date}")
+        plt.hlines(0.5, 0, 24, colors='white', linewidth=1)
+        plt.colorbar(label='Temperature (°C)')
+        plt.title(f"Thermal Visualization for {city} ({color.capitalize()} Roof) on {sim_date}")
         plt.xlabel("Hour")
-        plt.yticks([])
+        plt.yticks([0, 1], ['Outdoor', 'Indoor'])
         plt.xticks(np.arange(0, 25, 1))
         plt.xlim(0, 24)
+        plt.ylim(-0.5, 1.5)
         plt.tight_layout()
 
         # Save final frame
@@ -368,34 +451,112 @@ def visualize_thermal(city, color, sim_date):
         create_gif(frame_files, "thermal_heatmap.gif", duration=500)
 
     # Generate static heatmap with interactivity
-    fig, ax = plt.subplots(figsize=(12, 2))
+    fig, ax = plt.subplots(figsize=(12, 3))
+    data = np.array([T_in, T_out])  # Indoor first, then Outdoor
     im = ax.imshow(
-        [T_in], aspect='auto', cmap='inferno', extent=[0, 24, 0, 1],
-        vmin=min(T_in), vmax=max(T_in)
+        data, aspect='auto', cmap='inferno', extent=[0, 24, -0.5, 1.5],
+        vmin=min(min(T_out), min(T_in)), vmax=max(max(T_out), max(T_in))
     )
-    plt.colorbar(im, label='Indoor Temp (°C)')
-    ax.set_title(f"Thermal Visualization of Indoor Temp for {city} ({color.capitalize()} Roof) on {sim_date}")
+    ax.hlines(0.5, 0, 24, colors='white', linewidth=1)
+    plt.colorbar(im, label='Temperature (°C)')
+    ax.set_title(f"Thermal Visualization for {city} ({color.capitalize()} Roof) on {sim_date}")
     ax.set_xlabel("Hour")
-    ax.set_yticks([])
+    ax.set_yticks([0, 1])
+    ax.set_yticklabels(['Outdoor', 'Indoor'])
     ax.set_xticks(np.arange(0, 25, 1))
+    ax.set_ylim(-0.5, 1.5)
     plt.tight_layout()
 
-    # Add interactivity
+    # Add interactivity with swapped cursor data interpretation
     cursor = mplcursors.cursor(im, hover=True)
     @cursor.connect("add")
     def on_add(sel):
-        x = sel.target[0]
-        index = int(round(x))
-        if 0 <= index < 24:
+        x, y = sel.target
+        hour = int(round(x))
+        row_idx = int(round(y))
+        if 0 <= hour < 24 and 0 <= row_idx < 2:
+            label = 'Outdoor' if row_idx == 0 else 'Indoor'
+            temp = data[1, hour] if row_idx == 0 else data[0, hour]
             sel.annotation.set_text(
-                f"Hour: {index}\nOutdoor: {T_out[index]:.2f} °C\nIndoor: {T_in[index]:.2f} °C"
+                f"Hour: {hour}\n{label}: {temp:.2f} °C"
             )
 
     plt.savefig("thermal_heatmap.png")
     plt.show(block=True)
 
+def plot_all_colors(city, sim_date):
+    """Plot indoor temperatures for all roof colors and outdoor temperature."""
+    T_out, _ = simulate_indoor_temp(city, 'white', sim_date)  # Get outdoor temp
+    if T_out is None:
+        print("Cannot plot due to missing weather data.")
+        return
+
+    fig, ax = plt.subplots(figsize=(12, 8))
+    hours = np.arange(24)
+
+    # Plot outdoor temperature
+    ax.plot(
+        hours, T_out, label="Outdoor Temp (°C)",
+        linestyle='--', color='#4B0082', linewidth=2, marker='o', markersize=5
+    )
+
+    # Define colors for plotting
+    color_map = {
+        'white': '#F5F5DC',
+        'gray': '#696969',
+        'black': '#333333',
+        'red': 'red',
+        'orange': 'orange',
+        'green': 'green',
+        'blue': 'blue',
+        'beige': 'tan',
+        'brown': 'brown',
+        'unpainted': '#4682B4'
+    }
+
+    # Simulate and plot for each roof color
+    lines = []
+    color_order = ['white', 'gray', 'black', 'red', 'orange', 'green', 'blue', 'beige', 'brown', 'unpainted']
+    for color in color_order:
+        _, T_in = simulate_indoor_temp(city, color, sim_date)
+        if T_in is None:
+            continue
+        line, = ax.plot(
+            hours, T_in, label=f"Indoor - {color.capitalize()} Roof",
+            linestyle='-', color=color_map[color], linewidth=1.5, marker='o', markersize=4, alpha=0.8
+        )
+        lines.append(line)
+
+    ax.set_title(f"Indoor Temperature Simulation for All Roof Colors in {city} on {sim_date}")
+    ax.set_xlabel("Hour")
+    ax.set_ylabel("Temperature (°C)")
+    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10)
+    ax.grid(True)
+    ax.set_xticks(hours)
+    ax.set_xticklabels([str(h) for h in hours], rotation=45)
+    ax.set_xlim(0, 23)
+    min_temp = min(min(T_out), min(min(simulate_indoor_temp(city, c, sim_date)[1] or [float('inf')]) for c in ROOF_ABSORPTIVITY.keys()))
+    max_temp = max(max(T_out), max(max(simulate_indoor_temp(city, c, sim_date)[1] or [float('-inf')]) for c in ROOF_ABSORPTIVITY.keys()))
+    ax.set_ylim(min_temp - 1, max_temp + 1)
+    plt.tight_layout()
+
+    # Add interactivity
+    cursor = mplcursors.cursor(lines + [ax.get_lines()[0]], hover=True)
+    @cursor.connect("add")
+    def on_add(sel):
+        index = int(round(sel.target[0]))
+        if 0 <= index < 24:
+            label = sel.artist.get_label()
+            temp = sel.target[1]
+            sel.annotation.set_text(
+                f"Hour: {index}\n{label}: {temp:.2f} °C"
+            )
+
+    plt.savefig("all_colors_simulation.png", bbox_inches='tight')
+    plt.show(block=True)
+
 def get_user_input():
-    """Get validated user input for city, color, and simulation date."""
+    """Get validated user input for city, color, simulation date, and plot preferences."""
     # City input
     print("Available cities:", ", ".join(CITIES))
     while True:
@@ -426,9 +587,19 @@ def get_user_input():
         except ValueError:
             print("Invalid date format. Use YYYY-MM-DD (e.g., 2025-04-17).")
 
-    return city, color, sim_date.strftime('%Y-%m-%d')
+    # Combined plot input
+    while True:
+        combined_plot = input("Do you want a graph comparing all roof colors with outdoor temperature? (yes/no): ").strip().lower()
+        if combined_plot in ['yes', 'no']:
+            break
+        print("Please enter 'yes' or 'no'.")
+
+    return city, color, sim_date.strftime('%Y-%m-%d'), combined_plot == 'yes'
 
 if __name__ == "__main__":
-    city, color, sim_date = get_user_input()
+    city, color, sim_date, want_combined_plot = get_user_input()
     plot_simulation(city, color, sim_date)
     visualize_thermal(city, color, sim_date)
+    if want_combined_plot:
+        print_all_colors_temperature_table(city, sim_date)
+        plot_all_colors(city, sim_date)
